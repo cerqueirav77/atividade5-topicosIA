@@ -49,3 +49,88 @@ def tokenizar_par(exemplo: dict) -> dict:
 
 
 dados_tokenizados = [tokenizar_par(ex) for ex in subset]
+
+class ScaledDotProductAttention(nn.Module):
+    def forward(self, Q, K, V, mascara=None):
+        dimensao_k = K.shape[-1]
+        scores = Q @ K.transpose(-2, -1) / np.sqrt(dimensao_k)
+        if mascara is not None:
+            scores = scores + mascara
+        pesos = torch.softmax(scores, dim=-1)
+        return pesos @ V
+
+
+class EncoderBlock(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.W_query = nn.Linear(D_MODEL, D_MODEL, bias=False)
+        self.W_key   = nn.Linear(D_MODEL, D_MODEL, bias=False)
+        self.W_value = nn.Linear(D_MODEL, D_MODEL, bias=False)
+        self.atencao = ScaledDotProductAttention()
+        self.ffn     = nn.Sequential(
+            nn.Linear(D_MODEL, D_FF),
+            nn.ReLU(),
+            nn.Linear(D_FF, D_MODEL)
+        )
+        self.norm1 = nn.LayerNorm(D_MODEL)
+        self.norm2 = nn.LayerNorm(D_MODEL)
+
+    def forward(self, X):
+        Q, K, V = self.W_query(X), self.W_key(X), self.W_value(X)
+        X = self.norm1(X + self.atencao(Q, K, V))
+        X = self.norm2(X + self.ffn(X))
+        return X
+
+
+class DecoderBlock(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.W_query_self  = nn.Linear(D_MODEL, D_MODEL, bias=False)
+        self.W_key_self    = nn.Linear(D_MODEL, D_MODEL, bias=False)
+        self.W_value_self  = nn.Linear(D_MODEL, D_MODEL, bias=False)
+        self.W_query_cross = nn.Linear(D_MODEL, D_MODEL, bias=False)
+        self.W_key_cross   = nn.Linear(D_MODEL, D_MODEL, bias=False)
+        self.W_value_cross = nn.Linear(D_MODEL, D_MODEL, bias=False)
+        self.atencao = ScaledDotProductAttention()
+        self.ffn     = nn.Sequential(
+            nn.Linear(D_MODEL, D_FF),
+            nn.ReLU(),
+            nn.Linear(D_FF, D_MODEL)
+        )
+        self.norm1 = nn.LayerNorm(D_MODEL)
+        self.norm2 = nn.LayerNorm(D_MODEL)
+        self.norm3 = nn.LayerNorm(D_MODEL)
+
+    def forward(self, Y, Z):
+        seq_len = Y.shape[1]
+        mascara = torch.triu(torch.full((seq_len, seq_len), float('-inf')), diagonal=1)
+
+        Q, K, V = self.W_query_self(Y), self.W_key_self(Y), self.W_value_self(Y)
+        Y = self.norm1(Y + self.atencao(Q, K, V, mascara))
+
+        Q, K, V = self.W_query_cross(Y), self.W_key_cross(Z), self.W_value_cross(Z)
+        Y = self.norm2(Y + self.atencao(Q, K, V))
+
+        Y = self.norm3(Y + self.ffn(Y))
+        return Y
+
+
+class Transformer(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.embedding_enc = nn.Embedding(VOCAB_SIZE, D_MODEL, padding_idx=PAD_IDX)
+        self.embedding_dec = nn.Embedding(VOCAB_SIZE, D_MODEL, padding_idx=PAD_IDX)
+        self.encoder_stack = nn.ModuleList([EncoderBlock() for _ in range(N_CAMADAS)])
+        self.decoder_stack = nn.ModuleList([DecoderBlock() for _ in range(N_CAMADAS)])
+        self.projecao_final = nn.Linear(D_MODEL, VOCAB_SIZE)
+
+    def forward(self, ids_enc, ids_dec):
+        Z = self.embedding_enc(ids_enc)
+        for bloco in self.encoder_stack:
+            Z = bloco(Z)
+
+        Y = self.embedding_dec(ids_dec)
+        for bloco in self.decoder_stack:
+            Y = bloco(Y, Z)
+
+        return self.projecao_final(Y)
