@@ -50,6 +50,7 @@ def tokenizar_par(exemplo: dict) -> dict:
 
 dados_tokenizados = [tokenizar_par(ex) for ex in subset]
 
+
 class ScaledDotProductAttention(nn.Module):
     def forward(self, Q, K, V, mascara=None):
         dimensao_k = K.shape[-1]
@@ -104,13 +105,10 @@ class DecoderBlock(nn.Module):
     def forward(self, Y, Z):
         seq_len = Y.shape[1]
         mascara = torch.triu(torch.full((seq_len, seq_len), float('-inf')), diagonal=1)
-
         Q, K, V = self.W_query_self(Y), self.W_key_self(Y), self.W_value_self(Y)
         Y = self.norm1(Y + self.atencao(Q, K, V, mascara))
-
         Q, K, V = self.W_query_cross(Y), self.W_key_cross(Z), self.W_value_cross(Z)
         Y = self.norm2(Y + self.atencao(Q, K, V))
-
         Y = self.norm3(Y + self.ffn(Y))
         return Y
 
@@ -118,19 +116,49 @@ class DecoderBlock(nn.Module):
 class Transformer(nn.Module):
     def __init__(self):
         super().__init__()
-        self.embedding_enc = nn.Embedding(VOCAB_SIZE, D_MODEL, padding_idx=PAD_IDX)
-        self.embedding_dec = nn.Embedding(VOCAB_SIZE, D_MODEL, padding_idx=PAD_IDX)
-        self.encoder_stack = nn.ModuleList([EncoderBlock() for _ in range(N_CAMADAS)])
-        self.decoder_stack = nn.ModuleList([DecoderBlock() for _ in range(N_CAMADAS)])
+        self.embedding_enc  = nn.Embedding(VOCAB_SIZE, D_MODEL, padding_idx=PAD_IDX)
+        self.embedding_dec  = nn.Embedding(VOCAB_SIZE, D_MODEL, padding_idx=PAD_IDX)
+        self.encoder_stack  = nn.ModuleList([EncoderBlock() for _ in range(N_CAMADAS)])
+        self.decoder_stack  = nn.ModuleList([DecoderBlock() for _ in range(N_CAMADAS)])
         self.projecao_final = nn.Linear(D_MODEL, VOCAB_SIZE)
 
     def forward(self, ids_enc, ids_dec):
         Z = self.embedding_enc(ids_enc)
         for bloco in self.encoder_stack:
             Z = bloco(Z)
-
         Y = self.embedding_dec(ids_dec)
         for bloco in self.decoder_stack:
             Y = bloco(Y, Z)
-
         return self.projecao_final(Y)
+
+modelo     = Transformer()
+criterio   = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
+otimizador = torch.optim.Adam(modelo.parameters(), lr=LR)
+
+ids_enc_treino = torch.tensor([d["ids_origem"]  for d in dados_tokenizados])
+ids_dec_treino = torch.tensor([d["ids_destino"] for d in dados_tokenizados])
+
+print("Iniciando treinamento...\n")
+for epoca in range(1, N_EPOCHS + 1):
+    modelo.train()
+    loss_total = 0.0
+    n_batches  = 0
+
+    for i in range(0, len(ids_enc_treino), BATCH_SIZE):
+        enc_batch  = ids_enc_treino[i:i + BATCH_SIZE]
+        dec_batch  = ids_dec_treino[i:i + BATCH_SIZE]
+        dec_input  = dec_batch[:, :-1]
+        dec_target = dec_batch[:, 1:]
+
+        otimizador.zero_grad()
+        logits = modelo(enc_batch, dec_input)
+        loss   = criterio(logits.reshape(-1, VOCAB_SIZE), dec_target.reshape(-1))
+        loss.backward()
+        otimizador.step()
+
+        loss_total += loss.item()
+        n_batches  += 1
+
+    print(f"  Época {epoca:02d}/{N_EPOCHS} — Loss: {loss_total / n_batches:.4f}")
+
+print("\nTreinamento concluído.")
