@@ -162,3 +162,43 @@ for epoca in range(1, N_EPOCHS + 1):
     print(f"  Época {epoca:02d}/{N_EPOCHS} — Loss: {loss_total / n_batches:.4f}")
 
 print("\nTreinamento concluído.")
+
+def gerar_traducao(frase_origem: str) -> str:
+    modelo.eval()
+    with torch.no_grad():
+        ids_enc = tokenizador(
+            frase_origem,
+            max_length=MAX_LEN,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt"
+        )["input_ids"]
+
+        sequencia = [TOKEN_START]
+        tokens_gerados_ids = set()
+
+        for _ in range(MAX_LEN):
+            dec_input = torch.tensor([sequencia])
+            logits    = modelo(ids_enc, dec_input)[0, -1, :]
+
+            for tid in tokens_gerados_ids:
+                logits[tid] -= 5.0
+
+            proximo = logits.argmax().item()
+            if proximo == TOKEN_EOS:
+                break
+
+            sequencia.append(proximo)
+            tokens_gerados_ids.add(proximo)
+
+    tokens_gerados = tokenizador.convert_ids_to_tokens(sequencia[1:])
+    return tokenizador.convert_tokens_to_string(tokens_gerados)
+
+
+frase_teste  = subset[0]["translation"]["de"]
+traducao_ref = subset[0]["translation"]["en"]
+traducao_mod = gerar_traducao(frase_teste)
+
+print(f"\nEntrada (DE) : {frase_teste}")
+print(f"Referência   : {traducao_ref}")
+print(f"Modelo gerou : {traducao_mod}")
